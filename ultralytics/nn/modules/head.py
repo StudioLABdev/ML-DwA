@@ -14,7 +14,7 @@ from .conv import Conv
 from .transformer import MLP, DeformableTransformerDecoder, DeformableTransformerDecoderLayer
 from .utils import bias_init_with_prob, linear_init_
 
-__all__ = 'Detect', 'Segment', 'Pose', 'Classify', 'RTDETRDecoder'
+__all__ = 'Detect', 'Segment', 'Pose', 'Classify', 'DWAHead', 'RTDETRDecoder'
 
 
 class Detect(nn.Module):
@@ -167,6 +167,27 @@ class Classify(nn.Module):
             x = torch.cat(x, 1)
         x = self.linear(self.drop(self.pool(self.conv(x)).flatten(1)))
         return x if self.training else x.softmax(1)
+
+class DWAHead(Detect):
+    """YOLOv8 DWA head for DWA models."""
+
+    def __init__(self, nc=80, num_attr=219, ch=()):
+        """Initialize YOLO network with default parameters and Convolutional Layers."""
+        super().__init__(nc, ch)
+        self.num_attr = num_attr  # number of attributes
+        self.detect = Detect.forward
+
+        c4 = max(ch[0] // 4, self.num_attr)
+        self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.num_attr, 1)) for x in ch)
+
+    def forward(self, x):
+        """Perform forward pass through YOLO model and return predictions."""
+        bs = x[0].shape[0]  # batch size
+        attr = torch.cat([self.cv4[i](x[i]).view(bs, self.num_attr, -1) for i in range(self.nl)], -1)  # (bs, num_attr, h*w)
+        x = self.detect(self, x)
+        if self.training:
+            return x, attr
+        return torch.cat([x, attr], 1) if self.export else (torch.cat([x[0], attr], 1), (x[1], attr))
 
 
 class RTDETRDecoder(nn.Module):
