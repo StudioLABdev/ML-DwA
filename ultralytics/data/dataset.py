@@ -32,10 +32,11 @@ class YOLODataset(BaseDataset):
         (torch.utils.data.Dataset): A PyTorch dataset object that can be used for training an object detection model.
     """
 
-    def __init__(self, *args, data=None, use_segments=False, use_keypoints=False, **kwargs):
+    def __init__(self, *args, data=None, use_segments=False, use_keypoints=False, use_attributes=False, **kwargs):
         """Initializes the YOLODataset with optional configurations for segments and keypoints."""
         self.use_segments = use_segments
         self.use_keypoints = use_keypoints
+        self.use_attributes = use_attributes
         self.data = data
         assert not (self.use_segments and self.use_keypoints), 'Can not use both segments and keypoints.'
         super().__init__(*args, **kwargs)
@@ -54,6 +55,7 @@ class YOLODataset(BaseDataset):
         desc = f'{self.prefix}Scanning {path.parent / path.stem}...'
         total = len(self.im_files)
         nkpt, ndim = self.data.get('kpt_shape', (0, 0))
+        num_attr = self.data.get('num_attr', 68)
         if self.use_keypoints and (nkpt <= 0 or ndim not in (2, 3)):
             raise ValueError("'kpt_shape' in data.yaml missing or incorrect. Should be a list with [number of "
                              "keypoints, number of dims (2 for x,y or 3 for x,y,visible)], i.e. 'kpt_shape: [17, 3]'")
@@ -61,9 +63,9 @@ class YOLODataset(BaseDataset):
             results = pool.imap(func=verify_image_label,
                                 iterable=zip(self.im_files, self.label_files, repeat(self.prefix),
                                              repeat(self.use_keypoints), repeat(len(self.data['names'])), repeat(nkpt),
-                                             repeat(ndim)))
+                                             repeat(ndim), repeat(num_attr), repeat(self.use_attributes)))
             pbar = TQDM(results, desc=desc, total=total)
-            for im_file, lb, shape, segments, keypoint, nm_f, nf_f, ne_f, nc_f, msg in pbar:
+            for im_file, lb, shape, segments, keypoint, attributes, nm_f, nf_f, ne_f, nc_f, msg in pbar:
                 nm += nm_f
                 nf += nf_f
                 ne += ne_f
@@ -77,6 +79,7 @@ class YOLODataset(BaseDataset):
                             bboxes=lb[:, 1:],  # n, 4
                             segments=segments,
                             keypoints=keypoint,
+                            attributes=attributes,
                             normalized=True,
                             bbox_format='xywh'))
                 if msg:
@@ -104,6 +107,7 @@ class YOLODataset(BaseDataset):
             assert cache['hash'] == get_hash(self.label_files + self.im_files)  # identical hash
         except (FileNotFoundError, AssertionError, AttributeError):
             cache, exists = self.cache_labels(cache_path), False  # run cache ops
+        # cache, exists = self.cache_labels(cache_path), False  # run cache ops
 
         # Display cache
         nf, nm, ne, nc, n = cache.pop('results')  # found, missing, empty, corrupt, total
@@ -147,6 +151,7 @@ class YOLODataset(BaseDataset):
                    normalize=True,
                    return_mask=self.use_segments,
                    return_keypoint=self.use_keypoints,
+                   return_attributes=self.use_attributes,
                    batch_idx=True,
                    mask_ratio=hyp.mask_ratio,
                    mask_overlap=hyp.overlap_mask))
@@ -166,9 +171,10 @@ class YOLODataset(BaseDataset):
         bboxes = label.pop('bboxes')
         segments = label.pop('segments')
         keypoints = label.pop('keypoints', None)
+        attributes = label.pop('attributes', None)
         bbox_format = label.pop('bbox_format')
         normalized = label.pop('normalized')
-        label['instances'] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized)
+        label['instances'] = Instances(bboxes, segments, keypoints, attributes, bbox_format=bbox_format, normalized=normalized)
         return label
 
     @staticmethod
@@ -181,7 +187,7 @@ class YOLODataset(BaseDataset):
             value = values[i]
             if k == 'img':
                 value = torch.stack(value, 0)
-            if k in ['masks', 'keypoints', 'bboxes', 'cls']:
+            if k in ['masks', 'keypoints', 'bboxes', 'cls', "attributes"]:
                 value = torch.cat(value, 0)
             new_batch[k] = value
         new_batch['batch_idx'] = list(new_batch['batch_idx'])

@@ -498,13 +498,14 @@ class RandomPerspective:
 
         segments = instances.segments
         keypoints = instances.keypoints
+        attributes = instances.attributes
         # Update bboxes if there are segments.
         if len(segments):
             bboxes, segments = self.apply_segments(segments, M)
 
         if keypoints is not None:
             keypoints = self.apply_keypoints(keypoints, M)
-        new_instances = Instances(bboxes, segments, keypoints, bbox_format='xyxy', normalized=False)
+        new_instances = Instances(bboxes, segments, keypoints, attributes, bbox_format='xyxy', normalized=False)
         # Clip
         new_instances.clip(*self.size)
 
@@ -851,6 +852,7 @@ class Format:
                  normalize=True,
                  return_mask=False,
                  return_keypoint=False,
+                 return_attributes=False,
                  mask_ratio=4,
                  mask_overlap=True,
                  batch_idx=True):
@@ -859,6 +861,7 @@ class Format:
         self.normalize = normalize
         self.return_mask = return_mask  # set False when training detection only
         self.return_keypoint = return_keypoint
+        self.return_attributes = return_attributes
         self.mask_ratio = mask_ratio
         self.mask_overlap = mask_overlap
         self.batch_idx = batch_idx  # keep the batch indexes
@@ -888,6 +891,8 @@ class Format:
         labels['bboxes'] = torch.from_numpy(instances.bboxes) if nl else torch.zeros((nl, 4))
         if self.return_keypoint:
             labels['keypoints'] = torch.from_numpy(instances.keypoints)
+        if self.return_attributes:
+            labels['attributes'] = torch.from_numpy(instances.attributes)
         # Then we can use collate_fn
         if self.batch_idx:
             labels['batch_idx'] = torch.zeros(nl)
