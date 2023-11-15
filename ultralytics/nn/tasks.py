@@ -381,6 +381,7 @@ class DWAModel(DetectionModel):
             LOGGER.info(f"Overriding model.yaml num_attr={cfg['num_attr']} with num_attr={num_attr}")
             cfg['num_attr'] = num_attr
         super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
+        self.attr_names = {i: f'{i}' for i in range(cfg['num_attr'])}  # default names dict
 
     def init_criterion(self):
         """Initialize the loss criterion for the PoseModel."""

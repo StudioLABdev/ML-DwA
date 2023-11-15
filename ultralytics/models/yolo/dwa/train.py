@@ -43,6 +43,7 @@ class DWATrainer(yolo.detect.DetectionTrainer):
     def set_model_attributes(self):
         super().set_model_attributes()
         self.model.num_attr = self.data['num_attr']
+        self.model.attr_names = self.data['attr_names']  # attach attributes names to model
 
     def get_validator(self):
         """Returns an instance of the DWAValidator class for validation."""

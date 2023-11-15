@@ -1063,13 +1063,14 @@ class ClassifyMetrics(SimpleClass):
 
 class DWAMetrics(DetMetrics):
    
-    def __init__(self, save_dir=Path('.'), plot=False, on_plot=None, names=()) -> None:
+    def __init__(self, save_dir=Path('.'), plot=False, on_plot=None, names=(), attr_names=()) -> None:
         """Initialize a DetMetrics instance with a save directory, plot flag, callback function, and class names."""
         self.save_dir = save_dir
         self.plot = plot
         self.on_plot = on_plot
         self.names = names
         self.box = Metric()
+        self.attr_names = attr_names
         self.speed = {'preprocess': 0.0, 'inference': 0.0, 'loss': 0.0, 'postprocess': 0.0}
         self.task = 'dwa'
 
@@ -1086,6 +1087,7 @@ class DWAMetrics(DetMetrics):
         self.box.nc = len(self.names)
         self.box.update(results)
         self.attributes_metrics(attr_preds, attr_targets)
+        self.attributes_metrics_per_class(attr_preds, attr_targets)
 
     @property
     def keys(self):
@@ -1108,6 +1110,20 @@ class DWAMetrics(DetMetrics):
         rec = (attr_preds * attr_targets).sum() / (attr_targets.sum() + 1e-16)
         f1 = 2 * prec * rec / (prec + rec + 1e-16)
         self.attr_results = [acc, prec, rec, f1]
+
+    def attributes_metrics_per_class(self, attr_preds, attr_targets):
+        res = []
+        attr_targets = attr_targets > 0.5
+        acc = (attr_preds == attr_targets).mean(0)
+        prec = (attr_preds * attr_targets).sum(0) / (attr_preds.sum(0) + 1e-16)
+        rec = (attr_preds * attr_targets).sum(0) / (attr_targets.sum(0) + 1e-16)
+        f1 = 2 * prec * rec / (prec + rec + 1e-16)
+        for i, name in enumerate(self.attr_names):
+            res.append([acc[i], prec[i], rec[i], f1[i]])
+        self.attr_per_cls = res
+
+    def attr_class_result(self, i):
+        return self.attr_per_cls[i]
 
     @property
     def maps(self):

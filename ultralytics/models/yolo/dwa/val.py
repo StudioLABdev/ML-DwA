@@ -7,7 +7,7 @@ import torch
 
 from ultralytics.models.yolo.detect import DetectionValidator
 from ultralytics.utils import LOGGER, ops
-from ultralytics.utils.metrics import DWAMetrics, box_iou, kpt_iou
+from ultralytics.utils.metrics import DWAMetrics, box_iou
 from ultralytics.utils.plotting import output_to_target, plot_images
 
 
@@ -62,6 +62,7 @@ class DWAValidator(DetectionValidator):
         """Initiate pose estimation metrics for YOLO model."""
         super().init_metrics(model)
         self.num_attrs = self.data['num_attr']
+        self.metrics.attr_names = self.data['attr_names']
 
     def update_metrics(self, preds, batch):
         """Metrics."""
@@ -177,7 +178,7 @@ class DWAValidator(DetectionValidator):
     def print_results(self):
         """Prints training/validation set metrics per class."""
         pf = '%22s' + '%11i' * 2 + '%11.3g' * len(self.metrics.keys)  # print format
-        pf_det = '%22s' + '%11i' * 2 + '%11.3g' * len(self.metrics.keys[:4])
+        empty = [-1] * 4
         LOGGER.info(pf % ('all', self.seen, self.nt_per_class.sum(), *self.metrics.mean_results()))
         if self.nt_per_class.sum() == 0:
             LOGGER.warning(
@@ -186,7 +187,11 @@ class DWAValidator(DetectionValidator):
         # Print results per class
         if self.args.verbose and not self.training and self.nc > 1 and len(self.stats):
             for i, c in enumerate(self.metrics.ap_class_index):
-                LOGGER.info(pf_det % (self.names[c], self.seen, self.nt_per_class[c], *self.metrics.class_result(i)))
+                LOGGER.info(pf % (self.names[c], self.seen, self.nt_per_class[c], *self.metrics.class_result(i), *empty))
+        
+        if self.args.verbose and not self.training and self.num_attrs > 1 and len(self.stats):
+            for i, c in enumerate(self.metrics.attr_names):
+                LOGGER.info(pf % (self.metrics.attr_names[i], self.seen, self.nt_per_attrs[i], *empty,*self.metrics.attr_class_result(i)))
 
         if self.args.plots:
             for normalize in True, False:
@@ -195,6 +200,15 @@ class DWAValidator(DetectionValidator):
                                            normalize=normalize,
                                            on_plot=self.on_plot)
 
+    def get_stats(self):
+        """Returns metrics statistics and results dictionary."""
+        stats = [torch.cat(x, 0).cpu().numpy() for x in zip(*self.stats)]  # to numpy
+        if len(stats) and stats[0].any():
+            self.metrics.process(*stats)
+        self.nt_per_class = np.bincount(stats[-1].astype(int), minlength=self.nc)  # number of targets per class
+        self.nt_per_attrs = np.sum(stats[2], axis=0)  # number of targets per class
+        return self.metrics.results_dict
+    
     #TODO: check this
     # def eval_json(self, stats):
     #     """Evaluates object detection model using COCO JSON format."""
