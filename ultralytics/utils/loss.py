@@ -526,3 +526,117 @@ class v8ClassificationLoss:
         loss = torch.nn.functional.cross_entropy(preds, batch['cls'], reduction='sum') / 64
         loss_items = loss.detach()
         return loss, loss_items
+
+class v8DWALoss(v8DetectionLoss):
+    """Criterion class for computing training losses."""
+
+    def __init__(self, model):  # model must be de-paralleled
+        """Initializes v8PoseLoss with model, sets keypoint variables and declares a keypoint loss instance."""
+        super().__init__(model)
+        self.num_attr = model.model[-1].num_attr
+        self.bce_attr = nn.BCEWithLogitsLoss()
+        # sigmas = torch.from_numpy(OKS_SIGMA).to(self.device) if is_pose else torch.ones(nkpt, device=self.device) / nkpt
+        # self.keypoint_loss = KeypointLoss(sigmas=sigmas)
+
+    def __call__(self, preds, batch):
+        """Calculate the total loss and detach it."""
+        loss = torch.zeros(4, device=self.device)  
+        feats, pred_attrs = preds if isinstance(preds[0], list) else preds[1]
+        pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
+            (self.reg_max * 4, self.nc), 1)
+
+        # B, grids, ..
+        pred_scores = pred_scores.permute(0, 2, 1).contiguous()
+        pred_distri = pred_distri.permute(0, 2, 1).contiguous()
+        pred_attrs = pred_attrs.permute(0, 2, 1).contiguous()
+
+        dtype = pred_scores.dtype
+        imgsz = torch.tensor(feats[0].shape[2:], device=self.device, dtype=dtype) * self.stride[0]  # image size (h,w)
+        anchor_points, stride_tensor = make_anchors(feats, self.stride, 0.5)
+
+        # Targets
+        batch_size = pred_scores.shape[0]
+        batch_idx = batch['batch_idx'].view(-1, 1)
+        targets = torch.cat((batch_idx, batch['cls'].view(-1, 1), batch['bboxes']), 1)
+        targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
+        gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
+        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0)
+
+        # Pboxes
+        pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
+
+        _, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
+            pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
+            anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
+
+        target_scores_sum = max(target_scores.sum(), 1)
+
+        # Cls loss
+        # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
+        loss[2] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
+
+        # Bbox loss
+        if fg_mask.sum():
+            target_bboxes /= stride_tensor
+            loss[0], loss[3] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
+                                              target_scores_sum, fg_mask)
+            attributes = batch['attributes'].to(self.device).float().clone()
+
+            loss[1] = self.calculate_attributes_loss(fg_mask, target_gt_idx, attributes, batch_idx, pred_attrs)
+
+        loss[0] *= self.hyp.box  # box gain
+        loss[1] *= self.hyp.attr  # attr gain
+        loss[2] *= self.hyp.cls  # cls gain
+        loss[3] *= self.hyp.dfl  # dfl gain
+
+        return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
+
+    #TODO
+    def calculate_attributes_loss(self, masks, target_gt_idx, attributes, batch_idx,
+                                 pred_attrs):
+        """
+        Args:
+            masks (torch.Tensor): Binary mask tensor indicating object presence, shape (BS, N_anchors).
+            target_gt_idx (torch.Tensor): Index tensor mapping anchors to ground truth objects, shape (BS, N_anchors).
+            keypoints (torch.Tensor): Ground truth keypoints, shape (N_kpts_in_batch, N_kpts_per_object, kpts_dim).
+            batch_idx (torch.Tensor): Batch index tensor for keypoints, shape (N_kpts_in_batch, 1).
+            stride_tensor (torch.Tensor): Stride tensor for anchors, shape (N_anchors, 1).
+            target_bboxes (torch.Tensor): Ground truth boxes in (x1, y1, x2, y2) format, shape (BS, N_anchors, 4).
+            pred_attrs (torch.Tensor): Predicted keypoints, shape (BS, N_anchors, N_kpts_per_object, kpts_dim).
+
+        Returns:
+            (tuple): Returns a tuple containing:
+                - kpts_loss (torch.Tensor): The keypoints loss.
+                - kpts_obj_loss (torch.Tensor): The keypoints object loss.
+        """
+        batch_idx = batch_idx.flatten()
+        batch_size = len(masks)
+
+        max_attributes = torch.unique(batch_idx, return_counts=True)[1].max()
+
+        # Expand dimensions of target_gt_idx to match the shape of batched_keypoints
+        target_gt_idx_expanded = target_gt_idx.unsqueeze(-1)
+
+        # Create a tensor to hold batched keypoints
+        batched_attributes = torch.zeros((batch_size, max_attributes, attributes.shape[1]),
+                                        device=attributes.device)
+        
+        for i in range(batch_size):
+            attributes_i = attributes[batch_idx == i]
+            batched_attributes[i, :attributes_i.shape[0]] = attributes_i
+
+        # Use target_gt_idx_expanded to select keypoints from batched_keypoints
+        selected_attributes = batched_attributes.gather(
+            1, target_gt_idx_expanded.expand(-1, -1, self.num_attr))
+        
+        # selected_keypoints = batched_keypoints.gather(
+        #     1, target_gt_idx_expanded.expand(-1, -1, keypoints.shape[1], keypoints.shape[2]))
+
+        attr_loss = 0
+
+        if masks.any():
+            gt_attributes = selected_attributes[masks]
+            pred_attr = pred_attrs[masks]
+            attr_loss = self.bce_attr(pred_attr, gt_attributes.float())  # keypoint obj loss
+
+        return attr_loss
