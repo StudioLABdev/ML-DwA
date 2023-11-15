@@ -50,24 +50,17 @@ class DWATrainer(yolo.detect.DetectionTrainer):
         return yolo.dwa.DWAValidator(self.test_loader, save_dir=self.save_dir, args=copy(self.args))
 
     def plot_training_samples(self, batch, ni):
-        """Plot a batch of training samples with annotated class labels, bounding boxes, and attributes."""
-        images = batch['img']
-        attr = batch['attributes']
-        cls = batch['cls'].squeeze(-1)
-        bboxes = batch['bboxes']
-        paths = batch['im_file']
-        batch_idx = batch['batch_idx']
-        #TODO
-        # plot_images(images, 
-        #             batch_idx,
-        #             cls,
-        #             bboxes,
-        #             kpts=kpts,
-        #             paths=paths,
-        #             fname=self.save_dir / f'train_batch{ni}.jpg',
-        #             on_plot=self.on_plot)
+        """Plots training samples with their annotations."""
+        plot_images(images=batch['img'],
+                    batch_idx=batch['batch_idx'],
+                    cls=batch['cls'].squeeze(-1),
+                    bboxes=batch['bboxes'],
+                    paths=batch['im_file'],
+                    fname=self.save_dir / f'train_batch{ni}.jpg',
+                    on_plot=self.on_plot)
 
     def plot_metrics(self):
         """Plots training/val metrics."""
+        stop = 0
         #TODO
-        # plot_results(file=self.csv, pose=True, on_plot=self.on_plot)  # save results.png
+        plot_results(file=self.csv, on_plot=self.on_plot)  # save results.png
