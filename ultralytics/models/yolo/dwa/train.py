@@ -62,6 +62,5 @@ class DWATrainer(yolo.detect.DetectionTrainer):
 
     def plot_metrics(self):
         """Plots training/val metrics."""
-        stop = 0
         #TODO
         plot_results(file=self.csv, on_plot=self.on_plot)  # save results.png
