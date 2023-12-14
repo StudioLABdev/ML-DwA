@@ -1,6 +1,7 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
 import os
+import psutil
 import random
 from pathlib import Path
 
@@ -73,6 +74,12 @@ def seed_worker(worker_id):  # noqa
     worker_seed = torch.initial_seed() % 2 ** 32
     np.random.seed(worker_seed)
     random.seed(worker_seed)
+    used_cpus = set(psutil.Process().cpu_affinity())
+    all_cpus = set(range(psutil.cpu_count()))
+    unused_cpus = list(all_cpus - used_cpus)
+    random.shuffle(unused_cpus)
+    affined_id = unused_cpus[0]
+    os.sched_setaffinity(os.getpid(), {affined_id})
 
 
 def build_yolo_dataset(cfg, img_path, batch, data, mode='train', rect=False, stride=32):
