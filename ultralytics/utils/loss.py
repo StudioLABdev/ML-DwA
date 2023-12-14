@@ -534,7 +534,7 @@ class v8DWALoss(v8DetectionLoss):
         """Initializes v8PoseLoss with model, sets keypoint variables and declares a keypoint loss instance."""
         super().__init__(model)
         self.num_attr = model.model[-1].num_attr
-        self.bce_attr = nn.BCEWithLogitsLoss()
+        self.bce_attr = AsymLoss(4.0)
         # sigmas = torch.from_numpy(OKS_SIGMA).to(self.device) if is_pose else torch.ones(nkpt, device=self.device) / nkpt
         # self.keypoint_loss = KeypointLoss(sigmas=sigmas)
 
@@ -640,3 +640,29 @@ class v8DWALoss(v8DetectionLoss):
             attr_loss = self.bce_attr(pred_attr, gt_attributes.float())  # keypoint obj loss
 
         return attr_loss
+    
+class AsymLoss():
+    def __init__(
+        self, gamma=0, size_average=True, ignore_index=-1, *args, **kwargs
+    ):
+        if not gamma >= 0:
+            raise ValueError(f"gamma :{gamma} must be larger than 0")
+        self.gamma = gamma
+        self.alpha = 0.5
+        self.ignore_index = ignore_index
+        self.size_average = size_average
+
+    def __call__(self, inputs, targets):
+
+        p = torch.sigmoid(inputs)
+        p_neg = torch.clamp(p-0.05, 0)
+        loss = neg_log(p)
+        neg_loss = (p_neg ** self.gamma) * neg_log(1 - p_neg)
+        loss[targets == 0] = neg_loss[targets == 0]
+        # em_loss = -0.01 * (p_neg * neg_log(p_neg) + (1 - p_neg) * neg_log(1 - p_neg))
+        loss = loss[targets != self.ignore_index].mean()
+
+        return loss
+
+def neg_log(x):
+    return - torch.log(x + 1e-7)
